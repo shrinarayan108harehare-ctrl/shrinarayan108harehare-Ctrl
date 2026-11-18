@@ -1,0 +1,6 @@
+{
+  "name": "Prayag Deen & Sons",
+  "description": "Pharmacy delivery, prescription chat, multi-stop Google Maps routing, multi-manager RBAC & audit logs, and business intelligence for Prayag Deen & Sons Medical.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,618 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBootstrappedOwner() {
+      return isSignedIn() &&
+             'email' in request.auth.token &&
+             'email_verified' in request.auth.token &&
+             request.auth.token.email == 'shrinarayan108harehare@gmail.com' &&
+             request.auth.token.email_verified == true;
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return isSignedIn() && userExists() && userDoc().active == true;
+    }
+
+    function isManager() {
+      return isBootstrappedOwner() || (
+        isActiveUser() &&
+        (userDoc().role == 'manager' || userDoc().role == 'owner') &&
+        userDoc().linkedManagerId is string &&
+        exists(/databases/$(database)/documents/managers/$(userDoc().linkedManagerId)) &&
+        get(/databases/$(database)/documents/managers/$(userDoc().linkedManagerId)).data.active == true &&
+        get(/databases/$(database)/documents/managers/$(userDoc().linkedManagerId)).data.linkedUid == request.auth.uid
+      );
+    }
+
+    function isOwner() {
+      return isBootstrappedOwner() || (
+        isManager() &&
+        userDoc().role == 'owner' &&
+        get(/databases/$(database)/documents/managers/$(userDoc().linkedManagerId)).data.roleType == 'owner'
+      );
+    }
+
+    function isDeliveryPerson() {
+      return isActiveUser() &&
+             userDoc().role == 'delivery' &&
+             userDoc().linkedDeliveryPersonId is string &&
+             exists(/databases/$(database)/documents/deliveryPersonnel/$(userDoc().linkedDeliveryPersonId)) &&
+             get(/databases/$(database)/documents/deliveryPersonnel/$(userDoc().linkedDeliveryPersonId)).data.active == true &&
+             get(/databases/$(database)/documents/deliveryPersonnel/$(userDoc().linkedDeliveryPersonId)).data.linkedUid == request.auth.uid;
+    }
+
+    function myDeliveryPersonId() {
+      return userDoc().linkedDeliveryPersonId;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isValidUserAccount(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.role in ['customer', 'manager', 'owner', 'delivery'] &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             data.active is bool &&
+             data.language in ['en', 'hi'] &&
+             (!('phone' in data) || (data.phone is string && data.phone.size() <= 25)) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
+             (!('linkedManagerId' in data) || (data.linkedManagerId is string && data.linkedManagerId.size() <= 128)) &&
+             (!('linkedDeliveryPersonId' in data) || (data.linkedDeliveryPersonId is string && data.linkedDeliveryPersonId.size() <= 128)) &&
+             (!('notificationsEnabled' in data) || data.notificationsEnabled is bool) &&
+             (!('fcmToken' in data) || (data.fcmToken is string && data.fcmToken.size() <= 500));
+    }
+
+    function isValidCustomerProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 4 && data.phone.size() <= 25 &&
+             data.active is bool &&
+             (!('phoneVerified' in data) || data.phoneVerified is bool) &&
+             (!('defaultAddressId' in data) || (data.defaultAddressId is string && data.defaultAddressId.size() <= 128)) &&
+             (!('defaultAddressText' in data) || (data.defaultAddressText is string && data.defaultAddressText.size() <= 400)) &&
+             (!('defaultLandmark' in data) || (data.defaultLandmark is string && data.defaultLandmark.size() <= 200)) &&
+             (!('defaultArea' in data) || (data.defaultArea is string && data.defaultArea.size() <= 120)) &&
+             (!('defaultLat' in data) || data.defaultLat is number) &&
+             (!('defaultLng' in data) || data.defaultLng is number) &&
+             (!('totalOrders' in data) || (data.totalOrders is int && data.totalOrders >= 0)) &&
+             (!('totalSpent' in data) || (data.totalSpent is number && data.totalSpent >= 0));
+    }
+
+    function isValidCustomerAddress(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.label is string && data.label.size() >= 1 && data.label.size() <= 50 &&
+             data.villageOrArea is string && data.villageOrArea.size() >= 1 && data.villageOrArea.size() <= 120 &&
+             data.fullAddress is string && data.fullAddress.size() >= 1 && data.fullAddress.size() <= 400 &&
+             data.lat is number && data.lat >= -90 && data.lat <= 90 &&
+             data.lng is number && data.lng >= -180 && data.lng <= 180 &&
+             (!('houseNo' in data) || (data.houseNo is string && data.houseNo.size() <= 60)) &&
+             (!('street' in data) || (data.street is string && data.street.size() <= 150)) &&
+             (!('landmark' in data) || (data.landmark is string && data.landmark.size() <= 200)) &&
+             (!('accuracyMeters' in data) || (data.accuracyMeters is number && data.accuracyMeters >= 0)) &&
+             (!('primaryAddress' in data) || data.primaryAddress is bool);
+    }
+
+    function isValidManagerAccount(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 50 &&
+             data.mobile is string && data.mobile.size() >= 4 && data.mobile.size() <= 25 &&
+             data.roleType in ['owner', 'family_manager'] &&
+             data.passwordHash is string && data.passwordHash.size() == 64 &&
+             data.passwordSalt is string && data.passwordSalt.size() >= 8 && data.passwordSalt.size() <= 64 &&
+             data.active is bool &&
+             (!('authVerificationHash' in data) || (data.authVerificationHash is string && data.authVerificationHash.size() <= 64)) &&
+             (!('linkedUid' in data) || (data.linkedUid is string && data.linkedUid.size() <= 128)) &&
+             (!('lastLoginAt' in data) || data.lastLoginAt is timestamp);
+    }
+
+    function isValidDirectoryLookup(data) {
+      return data.accountId is string && data.accountId.size() >= 1 && data.accountId.size() <= 128 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 50 &&
+             data.salt is string && data.salt.size() >= 8 && data.salt.size() <= 64 &&
+             data.roleType is string && data.roleType.size() >= 1 && data.roleType.size() <= 30 &&
+             data.active is bool;
+    }
+
+    function isValidDeliveryPerson(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.mobile is string && data.mobile.size() >= 4 && data.mobile.size() <= 25 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 50 &&
+             data.passwordHash is string && data.passwordHash.size() == 64 &&
+             data.passwordSalt is string && data.passwordSalt.size() >= 8 && data.passwordSalt.size() <= 64 &&
+             data.active is bool &&
+             (!('authVerificationHash' in data) || (data.authVerificationHash is string && data.authVerificationHash.size() <= 64)) &&
+             (!('linkedUid' in data) || (data.linkedUid is string && data.linkedUid.size() <= 128)) &&
+             (!('onShift' in data) || data.onShift is bool) &&
+             (!('trackingConsentGranted' in data) || data.trackingConsentGranted is bool) &&
+             (!('lastLoginAt' in data) || data.lastLoginAt is timestamp);
+    }
+
+    function isValidConversation(data) {
+      return data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 100 &&
+             data.lastMessage is string && data.lastMessage.size() <= 500 &&
+             data.lastMessageType is string && data.lastMessageType.size() <= 40 &&
+             data.lastMessageAt is timestamp &&
+             (!('customerPhone' in data) || (data.customerPhone is string && data.customerPhone.size() <= 25)) &&
+             (!('customerArea' in data) || (data.customerArea is string && data.customerArea.size() <= 120)) &&
+             (!('unreadByManager' in data) || (data.unreadByManager is int && data.unreadByManager >= 0)) &&
+             (!('unreadByCustomer' in data) || (data.unreadByCustomer is int && data.unreadByCustomer >= 0)) &&
+             (!('activeOrderId' in data) || (data.activeOrderId is string && data.activeOrderId.size() <= 128)) &&
+             (!('activeOrderStatus' in data) || (data.activeOrderStatus is string && data.activeOrderStatus.size() <= 40));
+    }
+
+    function isValidChatMessage(data) {
+      return data.conversationId is string && data.conversationId.size() >= 1 && data.conversationId.size() <= 128 &&
+             data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             data.senderUid is string && data.senderUid == request.auth.uid &&
+             data.senderRole in ['customer', 'manager'] &&
+             data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 100 &&
+             data.messageType in ['text', 'image', 'prescription', 'document', 'video', 'audio', 'announcement_reply', 'order_update'] &&
+             data.text is string && data.text.size() <= 4000 &&
+             data.deliveryStatus in ['sending', 'sent', 'delivered', 'read', 'failed'] &&
+             (!('mediaBase64' in data) || (data.mediaBase64 is string && data.mediaBase64.size() <= 750000)) &&
+             (!('mediaUrl' in data) || (data.mediaUrl is string && data.mediaUrl.size() <= 1500)) &&
+             (!('mediaFileName' in data) || (data.mediaFileName is string && data.mediaFileName.size() <= 200)) &&
+             (!('mediaMimeType' in data) || (data.mediaMimeType is string && data.mediaMimeType.size() <= 100)) &&
+             (!('mediaDurationSec' in data) || (data.mediaDurationSec is int && data.mediaDurationSec >= 0)) &&
+             (!('orderId' in data) || (data.orderId is string && data.orderId.size() <= 128)) &&
+             (!('prescriptionVerified' in data) || data.prescriptionVerified is bool);
+    }
+
+    function isValidOrder(data) {
+      return data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 40 &&
+             data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 100 &&
+             data.customerPhone is string && data.customerPhone.size() >= 4 && data.customerPhone.size() <= 25 &&
+             data.deliveryAddress is string && data.deliveryAddress.size() >= 1 && data.deliveryAddress.size() <= 400 &&
+             data.deliveryArea is string && data.deliveryArea.size() >= 1 && data.deliveryArea.size() <= 120 &&
+             data.deliveryLat is number && data.deliveryLat >= -90 && data.deliveryLat <= 90 &&
+             data.deliveryLng is number && data.deliveryLng >= -180 && data.deliveryLng <= 180 &&
+             data.status in ['NEW', 'PENDING', 'PROCESSING', 'READY', 'ASSIGNED', 'PICKED_UP', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'] &&
+             (!('deliveryLandmark' in data) || (data.deliveryLandmark is string && data.deliveryLandmark.size() <= 200)) &&
+             (!('locationAccuracyMeters' in data) || (data.locationAccuracyMeters is number && data.locationAccuracyMeters >= 0)) &&
+             (!('liveLocationShared' in data) || data.liveLocationShared is bool) &&
+             (!('itemsSummary' in data) || (data.itemsSummary is string && data.itemsSummary.size() <= 2000)) &&
+             (!('prescriptionRequired' in data) || data.prescriptionRequired is bool) &&
+             (!('prescriptionVerified' in data) || data.prescriptionVerified is bool) &&
+             (!('verifiedByManagerName' in data) || (data.verifiedByManagerName is string && data.verifiedByManagerName.size() <= 100)) &&
+             (!('quotedBillAmount' in data) || (data.quotedBillAmount is number && data.quotedBillAmount >= 0)) &&
+             (!('quotedDeliveryCharge' in data) || (data.quotedDeliveryCharge is number && data.quotedDeliveryCharge >= 0)) &&
+             (!('assignedDeliveryPersonId' in data) || (data.assignedDeliveryPersonId is string && data.assignedDeliveryPersonId.size() <= 128)) &&
+             (!('assignedDeliveryUid' in data) || (data.assignedDeliveryUid is string && data.assignedDeliveryUid.size() <= 128)) &&
+             (!('assignedDeliveryPersonName' in data) || (data.assignedDeliveryPersonName is string && data.assignedDeliveryPersonName.size() <= 100)) &&
+             (!('cancellationReason' in data) || (data.cancellationReason is string && data.cancellationReason.size() <= 300)) &&
+             (!('deliveryIssue' in data) || (data.deliveryIssue is string && data.deliveryIssue.size() <= 400)) &&
+             (!('estimatedDistanceKm' in data) || (data.estimatedDistanceKm is number && data.estimatedDistanceKm >= 0)) &&
+             (!('actualDistanceKm' in data) || (data.actualDistanceKm is number && data.actualDistanceKm >= 0)) &&
+             (!('deliveryDurationMinutes' in data) || (data.deliveryDurationMinutes is int && data.deliveryDurationMinutes >= 0)) &&
+             (!('customerRating' in data) || (data.customerRating is int && data.customerRating >= 0 && data.customerRating <= 5)) &&
+             (!('customerFeedback' in data) || (data.customerFeedback is string && data.customerFeedback.size() <= 500)) &&
+             (!('lastUpdatedByManagerId' in data) || (data.lastUpdatedByManagerId is string && data.lastUpdatedByManagerId.size() <= 128)) &&
+             (!('lastUpdatedByManagerName' in data) || (data.lastUpdatedByManagerName is string && data.lastUpdatedByManagerName.size() <= 100)) &&
+             (!('idempotencyKey' in data) || (data.idempotencyKey is string && data.idempotencyKey.size() <= 128));
+    }
+
+    function isValidOrderFinancial(data) {
+      return data.orderId is string && data.orderId.size() >= 1 && data.orderId.size() <= 128 &&
+             data.orderNumber is string && data.orderNumber.size() >= 4 && data.orderNumber.size() <= 40 &&
+             data.customerId is string && data.customerId.size() >= 1 && data.customerId.size() <= 128 &&
+             data.orderStatus is string && data.orderStatus.size() <= 40 &&
+             data.billValue is number && data.billValue >= 0 &&
+             data.costValue is number && data.costValue >= 0 &&
+             data.netBusinessProfit is number &&
+             data.recordedByManagerId is string && data.recordedByManagerId.size() >= 1 && data.recordedByManagerId.size() <= 128 &&
+             data.recordedByManagerName is string && data.recordedByManagerName.size() >= 1 && data.recordedByManagerName.size() <= 100 &&
+             data.orderDateKey is string && data.orderDateKey.size() == 10 &&
+             (!('customerName' in data) || (data.customerName is string && data.customerName.size() <= 100)) &&
+             (!('deliveryArea' in data) || (data.deliveryArea is string && data.deliveryArea.size() <= 120)) &&
+             (!('discountAmount' in data) || (data.discountAmount is number && data.discountAmount >= 0)) &&
+             (!('refundAmount' in data) || (data.refundAmount is number && data.refundAmount >= 0)) &&
+             (!('netProductSales' in data) || data.netProductSales is number) &&
+             (!('productGrossProfit' in data) || data.productGrossProfit is number) &&
+             (!('deliveryDistanceKm' in data) || (data.deliveryDistanceKm is number && data.deliveryDistanceKm >= 0)) &&
+             (!('deliveryChargeCollected' in data) || (data.deliveryChargeCollected is number && data.deliveryChargeCollected >= 0)) &&
+             (!('deliveryExpensePaid' in data) || (data.deliveryExpensePaid is number && data.deliveryExpensePaid >= 0)) &&
+             (!('deliveryPersonId' in data) || (data.deliveryPersonId is string && data.deliveryPersonId.size() <= 128)) &&
+             (!('deliveryPersonName' in data) || (data.deliveryPersonName is string && data.deliveryPersonName.size() <= 100)) &&
+             (!('internalNotes' in data) || (data.internalNotes is string && data.internalNotes.size() <= 1000)) &&
+             (!('accountingMethod' in data) || data.accountingMethod in ['ACCRUAL', 'CASH']);
+    }
+
+    function isValidAuditLog(data) {
+      return data.managerId is string && data.managerId.size() >= 1 && data.managerId.size() <= 128 &&
+             data.managerName is string && data.managerName.size() >= 1 && data.managerName.size() <= 100 &&
+             data.actorUid is string && data.actorUid == request.auth.uid &&
+             data.actionPerformed is string && data.actionPerformed.size() >= 1 && data.actionPerformed.size() <= 100 &&
+             data.recordType is string && data.recordType.size() >= 1 && data.recordType.size() <= 60 &&
+             data.recordId is string && data.recordId.size() >= 1 && data.recordId.size() <= 128 &&
+             data.dateKey is string && data.dateKey.size() == 10 &&
+             data.timeDisplay is string && data.timeDisplay.size() >= 4 && data.timeDisplay.size() <= 30 &&
+             data.actionStatus in ['SUCCESS', 'DENIED', 'FAILED'] &&
+             data.prevHash is string && data.prevHash.size() >= 1 && data.prevHash.size() <= 128 &&
+             data.entryHash is string && data.entryHash.size() == 64 &&
+             (!('fieldChanged' in data) || (data.fieldChanged is string && data.fieldChanged.size() <= 80)) &&
+             (!('previousValue' in data) || (data.previousValue is string && data.previousValue.size() <= 500)) &&
+             (!('newValue' in data) || (data.newValue is string && data.newValue.size() <= 500)) &&
+             (!('modificationReason' in data) || (data.modificationReason is string && data.modificationReason.size() <= 300));
+    }
+
+    // 1. users
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isManager());
+      allow list: if isManager();
+      allow create, update: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        incoming().userId == userId &&
+        isValidUserAccount(incoming()) &&
+        (
+          incoming().role == 'customer' ||
+          isBootstrappedOwner() ||
+          (incoming().role in ['manager', 'owner'] &&
+           incoming().linkedManagerId is string &&
+           getAfter(/databases/$(database)/documents/managers/$(incoming().linkedManagerId)).data.linkedUid == request.auth.uid &&
+           getAfter(/databases/$(database)/documents/managers/$(incoming().linkedManagerId)).data.active == true) ||
+          (incoming().role == 'delivery' &&
+           incoming().linkedDeliveryPersonId is string &&
+           getAfter(/databases/$(database)/documents/deliveryPersonnel/$(incoming().linkedDeliveryPersonId)).data.linkedUid == request.auth.uid &&
+           getAfter(/databases/$(database)/documents/deliveryPersonnel/$(incoming().linkedDeliveryPersonId)).data.active == true)
+        );
+      allow delete: if false;
+    }
+
+    // 2. customers & saved addresses
+    match /customers/{customerId} {
+      allow get: if isSignedIn() && (request.auth.uid == customerId || isManager());
+      allow list: if isManager();
+      allow create: if isSignedIn() && isValidId(customerId) &&
+        (request.auth.uid == customerId || isManager()) &&
+        incoming().userId == customerId &&
+        isValidCustomerProfile(incoming()) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt);
+      allow update: if isSignedIn() && isValidId(customerId) &&
+        isValidCustomerProfile(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        (isManager() || (request.auth.uid == customerId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'phoneVerified', 'defaultAddressId', 'defaultAddressText', 'defaultLandmark', 'defaultArea', 'defaultLat', 'defaultLng', 'updatedAt'])));
+      allow delete: if false;
+
+      match /addresses/{addressId} {
+        allow get, list: if isSignedIn() && (request.auth.uid == customerId || isManager());
+        allow create: if isSignedIn() && isValidId(addressId) &&
+          (request.auth.uid == customerId || isManager()) &&
+          incoming().userId == customerId &&
+          isValidCustomerAddress(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt);
+        allow update: if isSignedIn() && isValidId(addressId) &&
+          (request.auth.uid == customerId || isManager()) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidCustomerAddress(incoming()) &&
+          isValidTimestamp(incoming().updatedAt);
+        allow delete: if isSignedIn() && isValidId(addressId) && (request.auth.uid == customerId || isManager());
+      }
+    }
+
+    // 3. managerDirectory & managers (Zero-Trust Password Verification + Owner Control)
+    match /managerDirectory/{username} {
+      allow get: if isSignedIn() && isValidId(username);
+      allow list: if isManager();
+      allow create: if isSignedIn() && isValidId(username) && isValidDirectoryLookup(incoming()) &&
+        (isOwner() || !exists(/databases/$(database)/documents/managers/owner));
+      allow update: if isValidId(username) && isValidDirectoryLookup(incoming()) && (
+        isOwner() ||
+        (
+          isManager() &&
+          existing().accountId == userDoc().linkedManagerId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['salt'])
+        )
+      );
+      allow delete: if isOwner() && isValidId(username);
+    }
+
+    match /managers/{managerId} {
+      allow get, list: if isManager();
+      allow create: if isSignedIn() && isValidId(managerId) && isValidManagerAccount(incoming()) &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt) &&
+        (isOwner() || !exists(/databases/$(database)/documents/managers/owner));
+      allow update: if isSignedIn() && isValidId(managerId) && isValidManagerAccount(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        (
+          isOwner() ||
+          (
+            existing().active == true &&
+            incoming().authVerificationHash == existing().passwordHash &&
+            incoming().linkedUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['linkedUid', 'lastLoginAt', 'updatedAt', 'authVerificationHash'])
+          ) ||
+          (
+            isManager() &&
+            existing().active == true &&
+            existing().linkedUid == request.auth.uid &&
+            userDoc().linkedManagerId == managerId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['passwordSalt', 'passwordHash', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // 4. deliveryDirectory & deliveryPersonnel
+    match /deliveryDirectory/{username} {
+      allow get: if isSignedIn() && isValidId(username);
+      allow list: if isManager();
+      allow create: if isSignedIn() && isValidId(username) && isValidDirectoryLookup(incoming()) &&
+        (isManager() || !exists(/databases/$(database)/documents/deliveryPersonnel/demo_dp));
+      allow update: if isManager() && isValidId(username) && isValidDirectoryLookup(incoming());
+      allow delete: if isManager() && isValidId(username);
+    }
+
+    match /deliveryPersonnel/{dpId} {
+      allow get: if isManager() || (isDeliveryPerson() && myDeliveryPersonId() == dpId);
+      allow list: if isManager();
+      allow create: if isSignedIn() && isValidId(dpId) && isValidDeliveryPerson(incoming()) &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt) &&
+        (isManager() || !exists(/databases/$(database)/documents/deliveryPersonnel/demo_dp));
+      allow update: if isSignedIn() && isValidId(dpId) && isValidDeliveryPerson(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        (
+          isManager() ||
+          (
+            existing().active == true &&
+            incoming().authVerificationHash == existing().passwordHash &&
+            incoming().linkedUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['linkedUid', 'lastLoginAt', 'updatedAt', 'authVerificationHash'])
+          ) ||
+          (
+            isDeliveryPerson() &&
+            myDeliveryPersonId() == dpId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['onShift', 'trackingConsentGranted', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // 5. conversations & messages (STRICTLY PRIVATE: Customer owner + Managers only; Delivery BLOCKED)
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && (request.auth.uid == conversationId || isManager());
+      allow list: if isManager() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(conversationId) &&
+        (request.auth.uid == conversationId || isManager()) &&
+        incoming().customerId == conversationId &&
+        isValidConversation(incoming()) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt);
+      allow update: if isSignedIn() && isValidId(conversationId) &&
+        (request.auth.uid == conversationId || isManager()) &&
+        incoming().customerId == existing().customerId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidConversation(incoming()) &&
+        isValidTimestamp(incoming().updatedAt);
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow get, list: if isSignedIn() && (request.auth.uid == conversationId || isManager());
+        allow create: if isSignedIn() && isValidId(messageId) &&
+          (
+            (request.auth.uid == conversationId && incoming().senderRole == 'customer') ||
+            (isManager() && incoming().senderRole == 'manager')
+          ) &&
+          incoming().conversationId == conversationId &&
+          incoming().customerId == conversationId &&
+          isValidChatMessage(incoming()) &&
+          isValidTimestamp(incoming().createdAt);
+        allow update: if isSignedIn() && isValidId(messageId) &&
+          (request.auth.uid == conversationId || isManager()) &&
+          incoming().conversationId == existing().conversationId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidChatMessage(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['deliveryStatus', 'prescriptionVerified']);
+        allow delete: if false;
+      }
+    }
+
+    // 6. orders (Customer own orders, Assigned DP own orders, Managers all)
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.assignedDeliveryUid == request.auth.uid ||
+        isManager()
+      );
+      allow list: if (isSignedIn() && resource.data.customerId == request.auth.uid) ||
+                     (isSignedIn() && resource.data.assignedDeliveryUid == request.auth.uid) ||
+                     isManager();
+      allow create: if isSignedIn() && isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt) &&
+        (
+          isManager() ||
+          (incoming().customerId == request.auth.uid && incoming().status == 'NEW')
+        );
+      allow update: if isSignedIn() && isValidId(orderId) &&
+        isValidOrder(incoming()) &&
+        incoming().customerId == existing().customerId &&
+        incoming().orderNumber == existing().orderNumber &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        (
+          isManager() ||
+          (
+            existing().customerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['deliveryAddress', 'deliveryArea', 'deliveryLandmark', 'deliveryLat', 'deliveryLng', 'locationAccuracyMeters', 'liveLocationShared', 'customerRating', 'customerFeedback', 'updatedAt'])
+          ) ||
+          (
+            isDeliveryPerson() &&
+            existing().assignedDeliveryPersonId == myDeliveryPersonId() &&
+            existing().status != 'CANCELLED' &&
+            existing().status != 'DELIVERED' &&
+            incoming().status in ['ASSIGNED', 'PICKED_UP', 'OUT_FOR_DELIVERY', 'DELIVERED'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'pickedUpAt', 'deliveredAt', 'deliveryIssue', 'actualDistanceKm', 'deliveryDurationMinutes', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // 7. orderFinancials (CONFIDENTIAL: Manager/Owner ONLY)
+    match /orderFinancials/{orderId} {
+      allow get, list: if isManager();
+      allow create: if isManager() && isValidId(orderId) && isValidOrderFinancial(incoming()) &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt);
+      allow update: if isManager() && isValidId(orderId) && isValidOrderFinancial(incoming()) &&
+        incoming().orderId == existing().orderId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt);
+      allow delete: if false;
+    }
+
+    // 8. deliveryAssignments
+    match /deliveryAssignments/{assignmentId} {
+      allow get, list: if isManager() || (isDeliveryPerson() && resource.data.deliveryPersonId == myDeliveryPersonId());
+      allow create: if isManager() && isValidId(assignmentId) &&
+        incoming().orderId is string && incoming().deliveryPersonId is string &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt);
+      allow update: if isManager() && isValidId(assignmentId) &&
+        incoming().createdAt == existing().createdAt && isValidTimestamp(incoming().updatedAt);
+      allow delete: if false;
+    }
+
+    // 9. deliveryLocations (Consent-gated shift tracking; Managers & own DP only)
+    match /deliveryLocations/{dpId} {
+      allow get: if isManager() || (isDeliveryPerson() && myDeliveryPersonId() == dpId);
+      allow list: if isManager();
+      allow create, update: if isValidId(dpId) && (
+        isManager() ||
+        (isDeliveryPerson() && myDeliveryPersonId() == dpId && incoming().linkedUid == request.auth.uid)
+      ) &&
+      incoming().deliveryPersonId == dpId &&
+      incoming().lat is number && incoming().lng is number &&
+      incoming().trackingActive is bool &&
+      isValidTimestamp(incoming().lastUpdatedAt);
+      allow delete: if false;
+    }
+
+    // 10. routePlans
+    match /routePlans/{planId} {
+      allow get, list: if isManager() || (isDeliveryPerson() && resource.data.deliveryPersonId == myDeliveryPersonId());
+      allow create: if isManager() && isValidId(planId) &&
+        incoming().name is string && incoming().name.size() <= 120 &&
+        incoming().stopOrderIds is list && incoming().stopOrderIds.size() <= 25 &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt);
+      allow update: if isManager() && isValidId(planId) &&
+        incoming().createdAt == existing().createdAt && isValidTimestamp(incoming().updatedAt);
+      allow delete: if isManager() && isValidId(planId);
+    }
+
+    // 11. announcements
+    match /announcements/{announcementId} {
+      allow get, list: if isSignedIn();
+      allow create: if isManager() && isValidId(announcementId) &&
+        incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 160 &&
+        incoming().message is string && incoming().message.size() >= 1 && incoming().message.size() <= 2000 &&
+        incoming().targetUids is list && incoming().targetUids.size() <= 100 &&
+        isValidTimestamp(incoming().createdAt);
+      allow update, delete: if false;
+    }
+
+    // 12. notifications (Per-recipient inbox + read status)
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && (resource.data.recipientUid == request.auth.uid || isManager());
+      allow list: if (isSignedIn() && resource.data.recipientUid == request.auth.uid) || isManager();
+      allow create: if isManager() && isValidId(notificationId) &&
+        incoming().announcementId is string &&
+        incoming().recipientUid is string &&
+        incoming().status in ['PENDING', 'SENT_TO_FCM', 'FAILED', 'OPENED', 'READ'] &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt);
+      allow update: if isSignedIn() && isValidId(notificationId) &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        (
+          isManager() ||
+          (
+            existing().recipientUid == request.auth.uid &&
+            incoming().status in ['OPENED', 'READ'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'openedAt', 'readAt', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // 13. advertisements
+    match /advertisements/{adId} {
+      allow get, list: if resource.data.active == true || isManager();
+      allow create: if isManager() && isValidId(adId) &&
+        incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 120 &&
+        incoming().active is bool &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt);
+      allow update: if isManager() && isValidId(adId) &&
+        incoming().createdAt == existing().createdAt && isValidTimestamp(incoming().updatedAt);
+      allow delete: if isManager() && isValidId(adId);
+    }
+
+    // 14. expenses (CONFIDENTIAL: Manager/Owner ONLY)
+    match /expenses/{expenseId} {
+      allow get, list: if isManager();
+      allow create: if isManager() && isValidId(expenseId) &&
+        incoming().title is string && incoming().title.size() >= 1 && incoming().title.size() <= 150 &&
+        incoming().amount is number && incoming().amount >= 0 &&
+        incoming().expenseDateKey is string && incoming().expenseDateKey.size() == 10 &&
+        isValidTimestamp(incoming().createdAt) && isValidTimestamp(incoming().updatedAt);
+      allow update: if isManager() && isValidId(expenseId) &&
+        incoming().createdAt == existing().createdAt && isValidTimestamp(incoming().updatedAt);
+      allow delete: if false;
+    }
+
+    // 15. businessSettings
+    match /businessSettings/{settingId} {
+      allow get: if settingId == 'shop_public' || isManager();
+      allow list: if isManager();
+      allow create, update: if isValidId(settingId) && isValidTimestamp(incoming().updatedAt) &&
+        (isManager() || (settingId == 'shop_public' && isSignedIn() && !exists(/databases/$(database)/documents/businessSettings/shop_public)));
+      allow delete: if false;
+    }
+
+    // 16. auditLogs (APPEND-ONLY, TAMPER-RESISTANT, NEVER EDIT OR DELETE)
+    match /auditLogs/{logId} {
+      allow get, list: if isManager();
+      allow create: if isManager() && isValidId(logId) && isValidAuditLog(incoming()) && isValidTimestamp(incoming().createdAt);
+      allow update, delete: if false;
+    }
+  }
+}
